@@ -1,7 +1,13 @@
-name = "vaultkey-sync"
-main = "vaultkey-sync-worker.js"
+name = "vaultkey"
+pages_build_output_dir = "."
 compatibility_date = "2026-09-25"
 
+# R2バケットとの紐付け。同じ内容をダッシュボードの
+# Settings > Functions > R2 bucket bindings から設定しても良い。
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "vaultkey-bucket"
+
+# VAULT_TOKEN はここには書かない。
+# ダッシュボードの Settings > Environment variables で Secret として設定するか、
+# ローカルなら: wrangler pages secret put VAULT_TOKEN --project-name=vaultkey
