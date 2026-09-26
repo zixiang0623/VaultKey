@@ -667,15 +667,27 @@ function syncEndpoint(){
   if(!s.url||!s.token){ $('#syncMsg').textContent='Worker URLとトークンを入力してください'; $('#syncMsg').style.color='var(--danger)'; return null; }
   return s;
 }
+let importIntent='import';
 $('#syncUploadBtn').onclick=async ()=>{
   const s=syncEndpoint(); if(!s) return;
-  $('#syncUploadBtn').classList.add('loading'); $('#syncMsg').textContent='アップロード中…'; $('#syncMsg').style.color='var(--sub)';
+  $('#syncUploadBtn').classList.add('loading'); $('#syncMsg').textContent='サーバーの状態を確認中…'; $('#syncMsg').style.color='var(--sub)';
   try{
-    const m=getMeta();
-    const res=await fetch(s.url.replace(/\/$/,'')+'/vault',{method:'PUT',headers:{'Authorization':'Bearer '+s.token,'Content-Type':'application/json'},body:JSON.stringify(m)});
+    const res=await fetch(s.url.replace(/\/$/,'')+'/vault',{headers:{'Authorization':'Bearer '+s.token}});
     if(!res.ok) throw new Error(res.status);
-    $('#syncMsg').style.color='var(--accent2)'; $('#syncMsg').textContent='アップロードしました';
-  }catch(e){ $('#syncMsg').style.color='var(--danger)'; $('#syncMsg').textContent='アップロードに失敗しました'; }
+    const remote=await res.json();
+    if(!remote){
+      // サーバーに何もない場合のみ、そのままアップロードして良い
+      const m=getMeta();
+      const put=await fetch(s.url.replace(/\/$/,'')+'/vault',{method:'PUT',headers:{'Authorization':'Bearer '+s.token,'Content-Type':'application/json'},body:JSON.stringify(m)});
+      if(!put.ok) throw new Error(put.status);
+      $('#syncMsg').style.color='var(--accent2)'; $('#syncMsg').textContent='アップロードしました';
+    } else {
+      // サーバーに既にデータがある場合は、先にそれを取り込んでマージしてから上書きする（事故防止）
+      pendingImport=remote; importIntent='upload';
+      $('#syncMsg').style.color='var(--warn)'; $('#syncMsg').textContent='サーバーに既存データがあります。先にマージします→パスワードを入力してください';
+      $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show');
+    }
+  }catch(e){ $('#syncMsg').style.color='var(--danger)'; $('#syncMsg').textContent='確認に失敗しました。アップロードは中止しました'; }
   finally{ $('#syncUploadBtn').classList.remove('loading'); }
 };
 $('#syncDownloadBtn').onclick=async ()=>{
@@ -686,7 +698,7 @@ $('#syncDownloadBtn').onclick=async ()=>{
     if(!res.ok) throw new Error(res.status);
     const remote=await res.json();
     if(!remote){ $('#syncMsg').style.color='var(--warn)'; $('#syncMsg').textContent='サーバーにまだデータがありません（先にアップロードしてください）'; return; }
-    pendingImport=remote; $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show');
+    pendingImport=remote; importIntent='download'; $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show');
   }catch(e){ $('#syncMsg').style.color='var(--danger)'; $('#syncMsg').textContent='ダウンロードに失敗しました（URL/トークン/CORS設定を確認）'; }
   finally{ $('#syncDownloadBtn').classList.remove('loading'); }
 };
@@ -720,7 +732,7 @@ let pendingImport=null;
 $('#importFile').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=()=>{ try{ pendingImport=JSON.parse(r.result); $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show'); }catch(err){ toast('ファイルを読み込めませんでした'); } };
+  r.onload=()=>{ try{ pendingImport=JSON.parse(r.result); importIntent='import'; $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show'); }catch(err){ toast('ファイルを読み込めませんでした'); } };
   r.readAsText(f); e.target.value='';
 });
 $('#importPwCancel').onclick=()=>$('#importPwOverlay').classList.remove('show');
@@ -735,9 +747,21 @@ $('#importPwOk').onclick=async ()=>{
       if(!ex){ vault.entries.push(im); added++; }
       else if((im.updated||0)>(ex.updated||0)){ Object.assign(ex,im); updated++; }
     });
-    persist(); render(); $('#importPwOverlay').classList.remove('show'); $('#settingsOverlay').classList.remove('show');
-    toast(`インポート完了（追加${added}件・更新${updated}件）`);
-  }catch(e){ err.textContent='パスワードが違うか、ファイルが壊れています'; }
+    persist(); render();
+    if(importIntent==='upload'){
+      const s=syncEndpoint();
+      if(s){
+        const m=getMeta();
+        const put=await fetch(s.url.replace(/\/$/,'')+'/vault',{method:'PUT',headers:{'Authorization':'Bearer '+s.token,'Content-Type':'application/json'},body:JSON.stringify(m)});
+        if(!put.ok) throw new Error(put.status);
+      }
+      $('#importPwOverlay').classList.remove('show'); $('#settingsOverlay').classList.remove('show');
+      toast(`マージしてアップロードしました（追加${added}件・更新${updated}件）`);
+    } else {
+      $('#importPwOverlay').classList.remove('show'); $('#settingsOverlay').classList.remove('show');
+      toast(`インポート完了（追加${added}件・更新${updated}件）`);
+    }
+  }catch(e){ err.textContent = importIntent==='upload' ? 'パスワードが違うか、アップロードに失敗しました' : 'パスワードが違うか、ファイルが壊れています'; }
 };
 })();
 </script>
