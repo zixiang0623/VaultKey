@@ -87,7 +87,8 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; ba
 #grid{display:flex; flex-direction:column}
 .entry{display:flex; align-items:center; gap:13px; padding:14px 16px; margin-bottom:8px; cursor:pointer; background:var(--bg2); border-radius:var(--radius); box-shadow:var(--shadow); transition:transform .15s var(--ease)}
 .entry:active{transform:scale(.98)}
-.avatar{width:42px;height:42px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0}
+.avatar{width:42px;height:42px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0;position:relative;overflow:hidden}
+.avatar .favicon{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; padding:9px; background:var(--bg2)}
 .entrymain{flex:1; min-width:0}
 .entry .title{font-weight:650; font-size:15px; word-break:break-word; letter-spacing:-.01em}
 .entry .user{color:var(--sub); font-size:12.5px; word-break:break-word; margin-top:1px}
@@ -501,6 +502,15 @@ function visibleEntries(){
 function pwCounts(){
   const m={}; vault.entries.forEach(e=>{ if(!e.deleted && e.password){ m[e.password]=(m[e.password]||0)+1; } }); return m;
 }
+function faviconUrl(url){
+  if(!url) return '';
+  try{
+    let u=url.trim(); if(!u) return '';
+    if(!/^https?:\/\//i.test(u)) u='https://'+u;
+    const host=new URL(u).hostname;
+    return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(host)}`;
+  }catch(e){ return ''; }
+}
 function render(){
   renderTagChips();
   const list=visibleEntries(), grid=$('#grid'), dup=pwCounts();
@@ -512,8 +522,9 @@ function render(){
     if(e.password && strong<=2) badges+='<span class="badge weak">弱い</span>';
     if(e.password && dup[e.password]>1) badges+='<span class="badge dup">重複</span>';
     const initial=esc((e.title||'?').trim().charAt(0).toUpperCase()||'?');
+    const fav=faviconUrl(e.url);
     card.innerHTML = `
-      <div class="avatar">${initial}</div>
+      <div class="avatar">${initial}${fav?`<img class="favicon" src="${fav}" alt="" onerror="this.remove()">`:''}</div>
       <div class="entrymain">
         <div class="title">${esc(e.title||'(無題)')}</div>
         <div class="user">${esc(e.username||'')}</div>
