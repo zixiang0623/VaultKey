@@ -563,7 +563,7 @@ async function renderTotpTicks(){
 
 function openTrashItem(id){
   const e=vault.entries.find(x=>x.id===id); if(!e) return;
-  if(confirm(`「${e.title}」を復元しますか？`)){ e.deleted=false; delete e.deletedAt; persist(); render(); toast('復元しました'); }
+  if(confirm(`「${e.title}」を復元しますか？`)){ e.deleted=false; delete e.deletedAt; e.updated=Date.now(); persist(); render(); toast('復元しました'); }
 }
 
 /* ---------- entry modal ---------- */
@@ -609,7 +609,7 @@ $('#entrySaveBtn').onclick=()=>{
 };
 $('#entryDeleteBtn').onclick=()=>{
   const e=vault.entries.find(x=>x.id===curId); if(!e) return;
-  e.deleted=true; e.deletedAt=Date.now(); persist(); $('#entryOverlay').classList.remove('show'); render(); toast('ゴミ箱に移動しました');
+  e.deleted=true; e.deletedAt=Date.now(); e.updated=Date.now(); persist(); $('#entryOverlay').classList.remove('show'); render(); toast('ゴミ箱に移動しました');
 };
 // click outside / copy-on-field via long press not needed; simple click-to-copy on detail fields
 ['fUser','fPass','fTotp'].forEach(id=>{});
