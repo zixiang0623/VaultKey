@@ -6,6 +6,151 @@
 <title>VaultKey — パスワード&TOTP管理</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔐</text></svg>">
 <style>
+:root{
+  --bg:oklch(97% .004 250); --bg2:oklch(100% 0 0); --bg3:oklch(95% .006 250);
+  --border:oklch(20% .01 250 / .08); --text:oklch(17% .01 250); --sub:oklch(50% .01 250);
+  --accent:oklch(58% .15 150); --accent-ink:oklch(99% 0 0); --accent-soft:oklch(58% .15 150 / .13);
+  --accent2:oklch(68% .16 155); --danger:oklch(58% .21 25); --warn:oklch(72% .15 80);
+  --radius:16px; --radius-sm:12px; --pill:999px;
+  --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --shadow:0 1px 2px oklch(0% 0 0 / .04), 0 8px 22px oklch(0% 0 0 / .07);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(13% .01 250); --bg2:oklch(19% .012 250); --bg3:oklch(24% .014 250);
+    --border:oklch(95% .01 250 / .1); --text:oklch(95% .008 250); --sub:oklch(65% .01 250);
+    --accent:oklch(70% .16 152); --accent-ink:oklch(12% .02 150); --accent-soft:oklch(70% .16 152 / .18);
+    --shadow:0 1px 2px oklch(0% 0 0 / .3), 0 10px 26px oklch(0% 0 0 / .35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:oklch(13% .01 250); --bg2:oklch(19% .012 250); --bg3:oklch(24% .014 250);
+  --border:oklch(95% .01 250 / .1); --text:oklch(95% .008 250); --sub:oklch(65% .01 250);
+  --accent:oklch(70% .16 152); --accent-ink:oklch(12% .02 150); --accent-soft:oklch(70% .16 152 / .18);
+  --shadow:0 1px 2px oklch(0% 0 0 / .3), 0 10px 26px oklch(0% 0 0 / .35);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.001ms!important;animation-duration:.001ms!important}}
+body{font-family:var(--font); background:var(--bg); color:var(--text); letter-spacing:-.011em; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); -webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit; color:inherit; font-size:15px}
+button{cursor:pointer; border:none; background:none; -webkit-tap-highlight-color:transparent}
+button:disabled{opacity:.4; cursor:not-allowed}
+input,select,textarea{background:var(--bg3); border:1.5px solid transparent; border-radius:var(--radius-sm); padding:13px 15px; color:var(--text); width:100%; transition:border-color .18s var(--ease), background .15s}
+input:hover,select:hover,textarea:hover{border-color:color-mix(in oklch, var(--accent) 35%, transparent)}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; background:var(--bg2); border-color:var(--accent); box-shadow:0 0 0 4px var(--accent-soft)}
+.btn{min-height:44px; padding:11px 20px; border-radius:var(--pill); font-size:14.5px; font-weight:650; transition:transform .13s var(--ease), filter .15s, background .15s}
+.btn:hover{filter:brightness(1.05)}
+.btn:active{transform:scale(.95); transition-duration:.06s}
+.btn-primary{background:var(--accent); color:var(--accent-ink); box-shadow:0 4px 14px color-mix(in oklch, var(--accent) 45%, transparent)}
+.btn-ghost{background:var(--bg3); color:var(--text)}
+.btn-ghost:hover{background:color-mix(in oklch, var(--accent) 10%, var(--bg3))}
+.btn-danger{background:transparent; color:var(--danger); border:1.5px solid color-mix(in oklch, var(--danger) 35%, transparent)}
+.btn-danger:hover{background:color-mix(in oklch, var(--danger) 10%, transparent)}
+.btn-icon{width:42px;height:42px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:17px; transition:background .15s, transform .12s var(--ease)}
+.btn-icon:hover{background:var(--bg3)}
+.btn-icon:active{transform:scale(.9)}
+.loading{opacity:.55; pointer-events:none}
+.card{background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow)}
+
+#lock{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px}
+#lock .card{width:100%; max-width:380px; padding:38px 32px; text-align:center; animation:pop .4s var(--ease)}
+@keyframes pop{from{opacity:0; transform:translateY(10px) scale(.97)} to{opacity:1; transform:none}}
+#lock .logo{font-size:44px}
+#lock h1{font-size:21px; margin:8px 0 2px; letter-spacing:-.03em}
+#lock p{color:var(--sub); font-size:13px; margin:0 0 22px}
+#lock input{margin-bottom:10px; text-align:center; letter-spacing:.04em}
+#lockErr{color:var(--danger); font-size:12.5px; min-height:16px; margin-bottom:6px}
+
+#app{display:none; min-height:100vh; flex-direction:column}
+#topbar{display:flex; align-items:center; gap:8px; padding:14px 24px; padding-top:calc(14px + env(safe-area-inset-top,0px)); position:sticky; top:0; z-index:10; background:color-mix(in oklch, var(--bg) 85%, transparent); backdrop-filter:blur(16px); border-bottom:1px solid var(--border)}
+#topbar .brand{font-weight:800; font-size:16px; display:flex; align-items:center; gap:6px; color:var(--text); letter-spacing:-.02em; white-space:nowrap}
+.spacer{flex:1}
+#layout{display:flex; flex:1; min-height:0; overflow:hidden}
+#sidebar{width:230px; padding:20px 14px; flex-shrink:0; display:flex; flex-direction:column; gap:3px}
+.navitem{display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:var(--radius-sm); font-size:14.5px; font-weight:600; width:100%; text-align:left; transition:background .15s var(--ease), color .15s; color:var(--sub)}
+.navitem .nav-ic{font-size:18px}
+.navitem:hover{background:var(--bg3); color:var(--text)}
+.navitem.active{background:var(--accent-soft); color:var(--accent)}
+#main{flex:1; overflow-y:auto; padding:20px 28px 40px}
+#searchbar{margin-bottom:16px}
+#searchbar input{border-radius:var(--pill); padding:13px 18px}
+#tagChips{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+.chip{display:inline-flex; align-items:center; padding:7px 14px; border-radius:var(--pill); font-size:12.5px; font-weight:600; border:1.5px solid var(--border); background:var(--bg2); transition:all .15s var(--ease); flex-shrink:0}
+.chip:hover{border-color:var(--accent)}
+.chip.active{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+#listMeta{display:flex; align-items:center; margin-bottom:12px; gap:10px}
+#listMeta strong{font-size:19px; letter-spacing:-.03em}
+#listMeta select{width:auto; padding:8px 12px; font-size:12.5px; border-radius:var(--pill)}
+#grid{display:flex; flex-direction:column}
+.entry{display:flex; align-items:center; gap:13px; padding:14px 16px; margin-bottom:8px; cursor:pointer; background:var(--bg2); border-radius:var(--radius); box-shadow:var(--shadow); transition:transform .15s var(--ease)}
+.entry:active{transform:scale(.98)}
+.avatar{width:42px;height:42px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex-shrink:0}
+.entrymain{flex:1; min-width:0}
+.entry .title{font-weight:650; font-size:15px; word-break:break-word; letter-spacing:-.01em}
+.entry .user{color:var(--sub); font-size:12.5px; word-break:break-word; margin-top:1px}
+.meta-row{margin-top:6px; display:flex; flex-wrap:wrap; gap:4px}
+.tag{font-size:10.5px; font-weight:650; padding:3px 9px; border-radius:var(--pill); background:var(--bg3); color:var(--sub)}
+.badge{font-size:10px; padding:3px 8px; border-radius:var(--pill); font-weight:700}
+.badge.weak{background:color-mix(in oklch, var(--danger) 15%, transparent); color:var(--danger)}
+.badge.dup{background:color-mix(in oklch, var(--warn) 20%, transparent); color:color-mix(in oklch, var(--warn) 60%, black)}
+.entryside{display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex-shrink:0}
+.totpmini{font-family:var(--mono); font-size:16px; letter-spacing:1.5px; display:flex; align-items:center; gap:7px; font-weight:700; color:var(--accent2)}
+.ring{width:18px; height:18px; border-radius:50%; flex-shrink:0; background:conic-gradient(var(--accent2) calc(var(--pct,100)*1%), var(--border) 0)}
+.ring.low{background:conic-gradient(var(--danger) calc(var(--pct,100)*1%), var(--border) 0)}
+.tsec{font-size:10.5px; color:var(--sub); font-weight:500}
+.fav{font-size:16px; opacity:.28; transition:opacity .15s, transform .15s var(--ease)}
+.fav.on{opacity:1; color:var(--warn)}
+.fav:active{transform:scale(1.3)}
+#empty{text-align:center; color:var(--sub); padding:70px 20px; font-size:14px}
+
+.overlay{position:fixed; inset:0; background:oklch(15% .01 260 / .35); backdrop-filter:blur(3px); display:none; align-items:flex-start; justify-content:center; z-index:50; padding:5vh 16px; overflow-y:auto}
+.overlay.show{display:flex; animation:fadein .18s var(--ease)}
+@keyframes fadein{from{opacity:0} to{opacity:1}}
+.modal{width:100%; max-width:460px; padding:26px; margin-bottom:5vh; animation:modalpop .3s var(--ease)}
+@keyframes modalpop{from{opacity:0; transform:scale(.95) translateY(8px)} to{opacity:1; transform:none}}
+.modal h2{margin:0 0 18px; font-size:18px; letter-spacing:-.02em}
+.field{margin-bottom:14px}
+.field label{font-size:12px; color:var(--sub); display:block; margin-bottom:7px; font-weight:600}
+.pwrow{display:flex; gap:6px}
+.pwrow input{font-family:var(--mono)}
+.strength{height:4px; border-radius:3px; background:var(--border); margin-top:8px; overflow:hidden}
+.strength div{height:100%; transition:width .25s var(--ease), background .25s}
+.modalfoot{display:flex; justify-content:space-between; gap:8px; margin-top:20px}
+.toast{position:fixed; bottom:calc(24px + env(safe-area-inset-bottom,0px)); left:50%; transform:translateX(-50%) translateY(24px); background:var(--text); color:var(--bg); padding:12px 22px; border-radius:var(--pill); font-size:13.5px; font-weight:600; opacity:0; transition:opacity .3s var(--ease), transform .3s var(--ease); z-index:100; pointer-events:none; box-shadow:var(--shadow)}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+.genopts label{display:flex; align-items:center; gap:9px; font-size:13.5px; margin-bottom:9px}
+.hint{font-size:11.5px; color:var(--sub); margin-top:6px; line-height:1.55}
+.brand-text{display:inline}
+
+@media (max-width:1024px){
+  #sidebar{width:76px; align-items:center}
+  .navitem{justify-content:center; padding:12px}
+  .nav-lb{display:none}
+}
+@media (min-width:1025px){
+  #main{max-width:880px; margin:0 auto; width:100%}
+}
+@media (max-width:680px){
+  #layout{flex-direction:column}
+  #sidebar{
+    position:fixed; bottom:0; left:0; right:0; width:100%; flex-direction:row; justify-content:space-around;
+    padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px)); background:color-mix(in oklch, var(--bg) 92%, transparent);
+    backdrop-filter:blur(16px); border-top:1px solid var(--border); z-index:15;
+  }
+  .navitem{flex-direction:column; gap:2px; padding:6px 8px; flex:1}
+  .nav-lb{display:block; font-size:10.5px}
+  #sidebarToggle{display:none!important}
+  #main{padding:14px 16px 90px}
+  .overlay{align-items:flex-end; padding:0}
+  .modal{max-width:none; border-radius:22px 22px 0 0; margin-bottom:0; padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
+  @keyframes modalpop{from{opacity:0; transform:translateY(30px)} to{opacity:1; transform:none}}
+}
+@media (max-width:420px){
+  .brand-text{display:none}
+}
 </style>
 </head>
 <body>
@@ -34,16 +179,16 @@
   </div>
   <div id="layout">
     <div id="sidebar">
-      <input id="search" placeholder="🔍 検索 — / で移動">
-      <h4>表示</h4>
-      <button class="navitem active" data-view="all">📋 すべて</button>
-      <button class="navitem" data-view="fav">⭐ お気に入り</button>
-      <button class="navitem" data-view="totp">⏱ TOTP登録済み</button>
-      <button class="navitem" data-view="trash">🗑 ゴミ箱</button>
-      <h4>タグ</h4>
-      <div id="tagChips"></div>
+      <button class="navitem active" data-view="all"><span class="nav-ic">🏠</span> <span class="nav-lb">すべて</span></button>
+      <button class="navitem" data-view="fav"><span class="nav-ic">⭐</span> <span class="nav-lb">お気に入り</span></button>
+      <button class="navitem" data-view="totp"><span class="nav-ic">⏱</span> <span class="nav-lb">TOTP</span></button>
+      <button class="navitem" data-view="trash"><span class="nav-ic">🗑</span> <span class="nav-lb">ゴミ箱</span></button>
     </div>
     <div id="main">
+      <div id="searchbar">
+        <input id="search" placeholder="🔍 検索">
+        <div id="tagChips"></div>
+      </div>
       <div id="listMeta">
         <strong id="viewTitle">すべて</strong>
         <span class="spacer"></span>
