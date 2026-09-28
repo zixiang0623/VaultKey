@@ -173,6 +173,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; ba
     <button class="btn-icon" id="sidebarToggle" style="display:none">☰</button>
     <div class="brand">🔐<span class="brand-text"> VaultKey</span></div>
     <div class="spacer"></div>
+    <button class="btn-icon" id="syncNowBtn" title="同期">🔄</button>
     <button class="btn-icon" id="themeBtn" title="テーマ切替">🌓</button>
     <button class="btn-icon" id="settingsBtn" title="設定">⚙️</button>
     <button class="btn btn-primary" id="addBtn">＋ 追加</button>
@@ -283,9 +284,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; ba
       <input id="syncUrl" placeholder="https://your-worker.xxx.workers.dev" style="margin-bottom:6px">
       <input type="password" id="syncToken" placeholder="トークン" style="margin-bottom:6px">
       <div style="display:flex; gap:8px">
-        <button class="btn btn-ghost" id="syncUploadBtn">⬆ アップロード</button>
-        <button class="btn btn-ghost" id="syncDownloadBtn">⬇ ダウンロード</button>
+        <button class="btn btn-primary" id="syncBtn" style="width:100%">🔄 同期する</button>
       </div>
+      <div class="hint">「同期」= サーバーの内容をこの端末に取り込み(マージ)→差分があればサーバーへ反映、を一度に行います。項目ごとに「更新日時が新しい方」が採用され、削除も同じ扱いです。押し間違えても他端末のデータは消えません。</div>
       <div class="hint" id="syncMsg"></div>
     </div>
     <div class="hint">全データはマスターパスワードから導出した鍵でAES-GCM暗号化した上でこの端末に保存されます。クラウド同期を設定しない限り外部には送信されません。同期設定時も、送信されるのは暗号文のみで、鍵（マスターパスワード）は一切送信されません。個人利用向けの簡易ツールです。定期的なバックアップを推奨します。</div>
@@ -296,8 +297,8 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; ba
 <!-- Import password prompt -->
 <div class="overlay" id="importPwOverlay">
   <div class="modal card" style="max-width:360px">
-    <h2>インポート用パスワード</h2>
-    <p class="hint">読み込むバックアップファイルを暗号化した際のマスターパスワードを入力してください。</p>
+    <h2 id="importPwTitle">インポート用パスワード</h2>
+    <p class="hint" id="importPwHint">読み込むバックアップファイルを暗号化した際のマスターパスワードを入力してください。</p>
     <input type="password" id="importPw" placeholder="パスワード" style="margin-bottom:10px">
     <div id="importErr" class="hint" style="color:var(--danger)"></div>
     <div class="modalfoot"><span class="spacer"></span><button class="btn btn-ghost" id="importPwCancel">キャンセル</button><button class="btn btn-primary" id="importPwOk">読み込む</button></div>
@@ -417,9 +418,9 @@ function lockNow(){
 }
 $('#lockNowBtn').onclick=lockNow;
 
-function persist(){
-  encObj(key,vault).then(({iv,ct})=>{
-    const m=getMeta(); m.iv=iv; m.ct=ct; localStorage.setItem(META,JSON.stringify(m));
+function persist(extra){
+  return encObj(key,vault).then(({iv,ct})=>{
+    const m=Object.assign(getMeta(),extra||{}); m.iv=iv; m.ct=ct; localStorage.setItem(META,JSON.stringify(m));
   });
 }
 function purgeOldTrash(){
@@ -472,13 +473,32 @@ function renderTagChips(){
     box.appendChild(c);
   });
 }
-function pwStrengthScore(pw){
-  if(!pw) return 0;
-  let pool=0; if(/[a-z]/.test(pw))pool+=26; if(/[A-Z]/.test(pw))pool+=26; if(/[0-9]/.test(pw))pool+=10; if(/[^A-Za-z0-9]/.test(pw))pool+=32;
-  const bits=pw.length*Math.log2(pool||2);
-  if(pw.length<8) return 1;
-  if(bits<40) return 2; if(bits<60) return 3; if(bits<80) return 4; return 5;
+const WEAK_WORDS=['password','passw0rd','p@ssw0rd','qwerty','asdfgh','zxcvbn','letmein','welcome','admin','login','iloveyou','monkey','dragon','master','sunshine','shadow','princess','football','baseball','trustno1','changeme','abc123','123456','654321','111111','000000','1q2w3e','qazwsx','1qaz2wsx','0987654321'];
+function pwAnalyze(pw,ctx){
+  if(!pw) return {score:0,reason:''};
+  const low=pw.toLowerCase();
+  if(WEAK_WORDS.some(w=>low.includes(w))) return {score:1,reason:'よくあるパスワード/並びを含んでいます'};
+  if((ctx||[]).some(c=>c&&String(c).length>=3&&low.includes(String(c).toLowerCase()))) return {score:1,reason:'タイトルやユーザー名を含んでいます'};
+  let seq=0,rep=0;
+  for(let i=1;i<pw.length;i++){
+    if(pw[i]===pw[i-1]) rep++;
+    if(i>=2){ const a=pw.charCodeAt(i-2),b=pw.charCodeAt(i-1),c=pw.charCodeAt(i); if(Math.abs(b-a)===1&&c-b===b-a) seq++; }
+  }
+  const uniq=new Set(pw).size;
+  if(pw.length<8) return {score:1,reason:'8文字未満です'};
+  if(uniq<=pw.length/3) return {score:1,reason:'同じ文字の繰り返しが多すぎます'};
+  const classes=[/[a-z]/,/[A-Z]/,/[0-9]/,/[^A-Za-z0-9]/].filter(r=>r.test(pw)).length;
+  const pool=(/[a-z]/.test(pw)?26:0)+(/[A-Z]/.test(pw)?26:0)+(/[0-9]/.test(pw)?10:0)+(/[^A-Za-z0-9]/.test(pw)?33:0);
+  const bits=Math.min(Math.max(0,pw.length-rep-seq),uniq*2)*Math.log2(pool||2);
+  let score=bits<45?2:bits<65?3:bits<85?4:5, reason='';
+  if(pw.length<12&&score>2){ score=2; reason='12文字以上にしましょう'; }
+  else if(classes<3&&score>3){ score=3; reason='大小英字・数字・記号を3種類以上混ぜましょう'; }
+  else if(pw.length<16&&score>4){ score=4; reason='16文字以上でさらに強くなります'; }
+  if(!reason){ if(seq>0) reason='連続した文字(abc,123)を避けましょう'; else if(score<=2) reason='長さや文字種を増やしましょう'; }
+  return {score,reason};
 }
+function pwStrengthScore(pw,ctx){ return pwAnalyze(pw,ctx).score; }
+function pwCtx(e){ return [e.title,(e.username||'').split('@')[0]]; }
 function visibleEntries(){
   const q=$('#search').value.trim().toLowerCase();
   let list=vault.entries.filter(e=>{
@@ -517,7 +537,7 @@ function render(){
   grid.innerHTML=''; $('#empty').style.display = list.length? 'none':'block';
   list.forEach(e=>{
     const card=document.createElement('div'); card.className='entry card'; card.dataset.id=e.id;
-    const strong=pwStrengthScore(e.password);
+    const strong=pwStrengthScore(e.password,pwCtx(e));
     let badges='';
     if(e.password && strong<=2) badges+='<span class="badge weak">弱い</span>';
     if(e.password && dup[e.password]>1) badges+='<span class="badge dup">重複</span>';
@@ -587,15 +607,18 @@ $('#entryCancelBtn').onclick=()=>$('#entryOverlay').classList.remove('show');
 $('#togglePw').onclick=()=>{ const i=$('#fPass'); i.type = i.type==='password'?'text':'password'; $('#togglePw').textContent = i.type==='password'?'👁':'🙈'; };
 $('#fPass').addEventListener('input',updateStrength);
 function updateStrength(){
-  const s=pwStrengthScore($('#fPass').value);
-  const colors=['','#e0435b','#e0435b','#e8a13a','#4f5bd5','#00b894'];
+  const pw=$('#fPass').value, a=pwAnalyze(pw,[$('#fTitle').value.trim(),$('#fUser').value.trim().split('@')[0]]), s=a.score;
+  const colors=['','#e0435b','#e0435b','#e8a13a','#7bc96f','#1fae63'];
   const labels=['','非常に弱い','弱い','普通','強い','非常に強い'];
   $('#strBar').style.width=(s*20)+'%'; $('#strBar').style.background=colors[s]||'transparent';
-  $('#strLabel').textContent = $('#fPass').value? labels[s] : '';
+  $('#strLabel').textContent = pw? labels[s]+(a.reason?'：'+a.reason:'') : '';
 }
+['fTitle','fUser'].forEach(id=>$('#'+id).addEventListener('input',updateStrength));
 $('#entrySaveBtn').onclick=()=>{
   const title=$('#fTitle').value.trim();
   if(!title){ toast('タイトルを入力してください'); $('#fTitle').focus(); return; }
+  const pwNow=$('#fPass').value, prevPw=curId?(vault.entries.find(x=>x.id===curId)||{}).password:null;
+  if(pwNow&&pwNow!==prevPw){ const a=pwAnalyze(pwNow,[title,$('#fUser').value.trim().split('@')[0]]); if(a.score<=2&&!confirm('パスワードが弱いです（'+(a.reason||'強度不足')+'）。このまま保存しますか？')) return; }
   const tags=$('#fTags').value.split(',').map(t=>t.trim()).filter(Boolean);
   const newPass=$('#fPass').value;
   if(curId){
@@ -654,7 +677,7 @@ $('#genUseBtn').onclick=()=>{ $('#fPass').value=$('#genOut').value; $('#genOverl
 
 /* ---------- settings ---------- */
 $('#settingsBtn').onclick=()=>{
-  $('#settingsOverlay').classList.add('show'); $('#changePwMsg').textContent=''; $('#syncMsg').textContent='';
+  $('#settingsOverlay').classList.add('show'); $('#changePwMsg').textContent=''; showLastSync();
   const s=vault.settings.sync||{}; $('#syncUrl').value=s.url||''; $('#syncToken').value=s.token||'';
 };
 $('#settingsCloseBtn').onclick=()=>$('#settingsOverlay').classList.remove('show');
@@ -667,42 +690,105 @@ function syncEndpoint(){
   if(!s.url||!s.token){ $('#syncMsg').textContent='Worker URLとトークンを入力してください'; $('#syncMsg').style.color='var(--danger)'; return null; }
   return s;
 }
-let importIntent='import';
-$('#syncUploadBtn').onclick=async ()=>{
-  const s=syncEndpoint(); if(!s) return;
-  $('#syncUploadBtn').classList.add('loading'); $('#syncMsg').textContent='サーバーの状態を確認中…'; $('#syncMsg').style.color='var(--sub)';
-  try{
-    const res=await fetch(s.url.replace(/\/$/,'')+'/vault',{headers:{'Authorization':'Bearer '+s.token}});
-    if(!res.ok) throw new Error(res.status);
-    const remote=await res.json();
-    if(!remote){
-      // サーバーに何もない場合のみ、そのままアップロードして良い
-      const m=getMeta();
-      const put=await fetch(s.url.replace(/\/$/,'')+'/vault',{method:'PUT',headers:{'Authorization':'Bearer '+s.token,'Content-Type':'application/json'},body:JSON.stringify(m)});
-      if(!put.ok) throw new Error(put.status);
-      $('#syncMsg').style.color='var(--accent2)'; $('#syncMsg').textContent='アップロードしました';
-    } else {
-      // サーバーに既にデータがある場合は、先にそれを取り込んでマージしてから上書きする（事故防止）
-      pendingImport=remote; importIntent='upload';
-      $('#syncMsg').style.color='var(--warn)'; $('#syncMsg').textContent='サーバーに既存データがあります。先にマージします→パスワードを入力してください';
-      $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show');
-    }
-  }catch(e){ $('#syncMsg').style.color='var(--danger)'; $('#syncMsg').textContent='確認に失敗しました。アップロードは中止しました'; }
-  finally{ $('#syncUploadBtn').classList.remove('loading'); }
+let pwAsk=null;
+function askPassword(title,hint,okLabel,verify){
+  return new Promise(res=>{
+    const ov=$('#importPwOverlay'), obj={verify,res};
+    pwAsk=obj;
+    const mo=new MutationObserver(()=>{ if(!ov.classList.contains('show')){ mo.disconnect(); if(pwAsk===obj){ pwAsk=null; res(null); } } });
+    mo.observe(ov,{attributes:true,attributeFilter:['class']});
+    $('#importPwTitle').textContent=title; $('#importPwHint').textContent=hint; $('#importPwOk').textContent=okLabel;
+    $('#importPw').value=''; $('#importErr').textContent=''; ov.classList.add('show');
+    setTimeout(()=>$('#importPw').focus(),50);
+  });
+}
+$('#importPwCancel').onclick=()=>$('#importPwOverlay').classList.remove('show');
+$('#importPwOk').onclick=async ()=>{
+  if(!pwAsk) return; const a=pwAsk, pw=$('#importPw').value;
+  $('#importPwOk').classList.add('loading');
+  try{ const r=await a.verify(pw); pwAsk=null; $('#importPwOverlay').classList.remove('show'); a.res({pw,r}); }
+  catch(e){ $('#importErr').textContent='パスワードが違うか、データが壊れています'; }
+  finally{ $('#importPwOk').classList.remove('loading'); }
 };
-$('#syncDownloadBtn').onclick=async ()=>{
-  const s=syncEndpoint(); if(!s) return;
-  $('#syncDownloadBtn').classList.add('loading'); $('#syncMsg').textContent='ダウンロード中…'; $('#syncMsg').style.color='var(--sub)';
-  try{
-    const res=await fetch(s.url.replace(/\/$/,'')+'/vault',{headers:{'Authorization':'Bearer '+s.token}});
-    if(!res.ok) throw new Error(res.status);
-    const remote=await res.json();
-    if(!remote){ $('#syncMsg').style.color='var(--warn)'; $('#syncMsg').textContent='サーバーにまだデータがありません（先にアップロードしてください）'; return; }
-    pendingImport=remote; importIntent='download'; $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show');
-  }catch(e){ $('#syncMsg').style.color='var(--danger)'; $('#syncMsg').textContent='ダウンロードに失敗しました（URL/トークン/CORS設定を確認）'; }
-  finally{ $('#syncDownloadBtn').classList.remove('loading'); }
-};
+$('#importPw').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#importPwOk').click(); });
 
+/* ---------- 同期: 取り込み(マージ) → 差分があれば反映 ---------- */
+function mergeEntries(list){
+  let added=0,updated=0;
+  (list||[]).forEach(im=>{
+    const i=vault.entries.findIndex(x=>x.id===im.id);
+    if(i<0){ vault.entries.push(im); added++; }
+    else if((im.updated||0)>(vault.entries[i].updated||0)){ vault.entries[i]=im; updated++; }
+  });
+  return {added,updated};
+}
+function localAhead(remoteEntries){
+  const m=new Map((remoteEntries||[]).map(e=>[e.id,e.updated||0]));
+  return vault.entries.some(e=>!m.has(e.id)||(e.updated||0)>m.get(e.id));
+}
+function showLastSync(){
+  const t=vault.settings.lastSync;
+  $('#syncMsg').style.color='var(--sub)';
+  $('#syncMsg').textContent = t? '最終同期: '+new Date(t).toLocaleString('ja-JP') : '';
+}
+function setSyncBusy(b){ ['#syncBtn','#syncNowBtn'].forEach(id=>$(id).classList.toggle('loading',b)); }
+let syncing=false;
+async function syncNow(){
+  if(syncing) return;
+  const s=syncEndpoint(); if(!s) return;
+  const base=s.url.replace(/\/$/,'')+'/vault', auth={'Authorization':'Bearer '+s.token};
+  const msg=(t,c)=>{ $('#syncMsg').textContent=t; $('#syncMsg').style.color=c||'var(--sub)'; };
+  syncing=true; setSyncBusy(true);
+  let cachedPw=null, pulledAdd=0, pulledUpd=0, pushed=false, done=false, note='';
+  try{
+    for(let attempt=0;attempt<4&&!done;attempt++){
+      msg('サーバーと照合中…');
+      const res=await fetch(base,{headers:auth,cache:'no-store'});
+      if(!res.ok) throw new Error('GET '+res.status);
+      const etag=res.headers.get('ETag'), remote=await res.json();
+      await persist();
+      let remoteEntries=null, mustPush=false;
+      if(remote){
+        const local=getMeta(); let data=null;
+        if(remote.salt===local.salt&&remote.iter===local.iter){ try{ data=await decObj(key,remote.iv,remote.ct); }catch(e){} }
+        if(!data&&cachedPw!==null){ try{ data=await decObj(await deriveKey(cachedPw,ub64(remote.salt),remote.iter),remote.iv,remote.ct); }catch(e){} }
+        if(!data){
+          const got=await askPassword('サーバー側データのパスワード','サーバー上のデータを暗号化したマスターパスワードを入力してください（通常はこの端末と同じもの）。','同期',async pw=>decObj(await deriveKey(pw,ub64(remote.salt),remote.iter),remote.iv,remote.ct));
+          if(!got){ msg('同期をキャンセルしました（何も変更していません）','var(--warn)'); return; }
+          data=got.r; cachedPw=got.pw;
+        }
+        remoteEntries=data.entries||[];
+        const st=mergeEntries(remoteEntries); pulledAdd+=st.added; pulledUpd+=st.updated;
+        if(cachedPw!==null&&(remote.salt!==local.salt||remote.iter!==local.iter)){
+          let same=false;
+          try{ await decObj(await deriveKey(cachedPw,ub64(local.salt),local.iter),local.iv,local.ct); same=true; }catch(e){}
+          if(same){ key=await deriveKey(cachedPw,ub64(remote.salt),remote.iter); await persist({salt:remote.salt,iter:remote.iter}); }
+          else { mustPush=true; note='サーバー側のパスワードをこの端末のものに更新しました。'; }
+        }
+      }
+      await persist();
+      if(remote&&!mustPush&&!localAhead(remoteEntries)){ done=true; break; }
+      msg('サーバーへ反映中…');
+      const put=await fetch(base,{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},auth,etag?{'If-Match':etag}:{}),body:JSON.stringify(getMeta())});
+      if(put.status===412){ msg('他の端末が同時に更新しました。取り込み直します…','var(--warn)'); continue; }
+      if(!put.ok) throw new Error('PUT '+put.status);
+      pushed=true; done=true;
+    }
+    if(!done) throw new Error('conflict');
+    vault.settings.lastSync=Date.now(); await persist(); render();
+    const pull=(pulledAdd+pulledUpd)>0? `取り込み: 追加${pulledAdd}件・更新${pulledUpd}件` : '取り込む変更なし';
+    const text=`同期完了（${pull} / ${pushed?'サーバーへ反映済み':'送信する変更なし'}）${note}`;
+    msg(text,'var(--accent2)'); toast('同期しました');
+  }catch(e){
+    msg('同期に失敗しました。データは変更していません（URL/トークン/通信を確認）','var(--danger)'); toast('同期に失敗しました');
+  }finally{ syncing=false; setSyncBusy(false); }
+}
+$('#syncBtn').onclick=syncNow;
+$('#syncNowBtn').onclick=()=>{
+  const s=vault.settings.sync||{};
+  if(!s.url||!s.token){ toast('先に設定でWorker URLとトークンを入力してください'); $('#settingsBtn').click(); return; }
+  syncNow();
+};
 $('#changePwBtn').onclick=async ()=>{
   const cur=$('#curPw').value, nw=$('#newPw').value, msg=$('#changePwMsg');
   msg.style.color='var(--danger)';
@@ -728,41 +814,18 @@ $('#exportBtn').onclick=()=>{
   toast('エクスポートしました（暗号化済み）');
 };
 $('#importBtn').onclick=()=>$('#importFile').click();
-let pendingImport=null;
 $('#importFile').addEventListener('change',e=>{
   const f=e.target.files[0]; if(!f) return;
   const r=new FileReader();
-  r.onload=()=>{ try{ pendingImport=JSON.parse(r.result); importIntent='import'; $('#importPw').value=''; $('#importErr').textContent=''; $('#importPwOverlay').classList.add('show'); }catch(err){ toast('ファイルを読み込めませんでした'); } };
+  r.onload=async ()=>{
+    let m; try{ m=JSON.parse(r.result); if(!m.salt||!m.iv||!m.ct) throw 0; }catch(err){ toast('ファイルを読み込めませんでした'); return; }
+    const got=await askPassword('インポート用パスワード','読み込むバックアップファイルを暗号化した際のマスターパスワードを入力してください。','読み込む',async pw=>decObj(await deriveKey(pw,ub64(m.salt),m.iter),m.iv,m.ct));
+    if(!got) return;
+    const st=mergeEntries(got.r.entries); persist(); render(); $('#settingsOverlay').classList.remove('show');
+    toast(`インポート完了（追加${st.added}件・更新${st.updated}件）`);
+  };
   r.readAsText(f); e.target.value='';
 });
-$('#importPwCancel').onclick=()=>$('#importPwOverlay').classList.remove('show');
-$('#importPwOk').onclick=async ()=>{
-  const pw=$('#importPw').value, err=$('#importErr');
-  try{
-    const k=await deriveKey(pw,ub64(pendingImport.salt),pendingImport.iter);
-    const data=await decObj(k,pendingImport.iv,pendingImport.ct);
-    let added=0,updated=0;
-    (data.entries||[]).forEach(im=>{
-      const ex=vault.entries.find(x=>x.id===im.id);
-      if(!ex){ vault.entries.push(im); added++; }
-      else if((im.updated||0)>(ex.updated||0)){ Object.assign(ex,im); updated++; }
-    });
-    persist(); render();
-    if(importIntent==='upload'){
-      const s=syncEndpoint();
-      if(s){
-        const m=getMeta();
-        const put=await fetch(s.url.replace(/\/$/,'')+'/vault',{method:'PUT',headers:{'Authorization':'Bearer '+s.token,'Content-Type':'application/json'},body:JSON.stringify(m)});
-        if(!put.ok) throw new Error(put.status);
-      }
-      $('#importPwOverlay').classList.remove('show'); $('#settingsOverlay').classList.remove('show');
-      toast(`マージしてアップロードしました（追加${added}件・更新${updated}件）`);
-    } else {
-      $('#importPwOverlay').classList.remove('show'); $('#settingsOverlay').classList.remove('show');
-      toast(`インポート完了（追加${added}件・更新${updated}件）`);
-    }
-  }catch(e){ err.textContent = importIntent==='upload' ? 'パスワードが違うか、アップロードに失敗しました' : 'パスワードが違うか、ファイルが壊れています'; }
-};
 })();
 </script>
 </body>
