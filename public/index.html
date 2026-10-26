@@ -280,6 +280,12 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none; ba
       </div>
       <input type="file" id="importFile" accept=".json" style="display:none">
     </div>
+    <div class="field"><label>iPhoneのパスワード(CSV)を読み込む</label>
+      <button class="btn btn-ghost" id="importCsvBtn" style="width:100%">📄 CSVファイルを選択</button>
+      <input type="file" id="importCsvFile" accept=".csv,text/csv" style="display:none">
+      <div class="hint">iPhoneの「設定 → パスワード → ︙ → すべてを書き出す」で作成したCSVファイルを選んでください。このCSVは暗号化されていない生データなので、取り込み後はファイルを削除することをおすすめします。</div>
+      <div class="hint" id="csvMsg"></div>
+    </div>
     <div class="field"><label>クラウド同期（Cloudflare Worker + R2、任意）</label>
       <input id="syncUrl" placeholder="https://your-worker.xxx.workers.dev" style="margin-bottom:6px">
       <input type="password" id="syncToken" placeholder="トークン" style="margin-bottom:6px">
@@ -329,6 +335,24 @@ async function decObj(key,ivB64,ctB64){
 }
 /* ---------- TOTP ---------- */
 const B32A="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function parseCSV(text){
+  text=text.replace(/^\uFEFF/,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const rows=[]; let row=[],field='',inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else inQ=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQ=true;
+      else if(c===','){ row.push(field); field=''; }
+      else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else field+=c;
+    }
+  }
+  if(field!==''||row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.some(c=>c!==''));
+}
 function parseSecret(raw){
   raw=raw.trim();
   if(raw.startsWith('otpauth://')){ try{ const u=new URL(raw); return (u.searchParams.get('secret')||'').replace(/\s/g,''); }catch(e){ return raw; } }
@@ -823,6 +847,36 @@ $('#importFile').addEventListener('change',e=>{
     if(!got) return;
     const st=mergeEntries(got.r.entries); persist(); render(); $('#settingsOverlay').classList.remove('show');
     toast(`インポート完了（追加${st.added}件・更新${st.updated}件）`);
+  };
+  r.readAsText(f); e.target.value='';
+});
+$('#importCsvBtn').onclick=()=>$('#importCsvFile').click();
+$('#importCsvFile').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const msg=$('#csvMsg'); msg.style.color='var(--sub)';
+    let rows; try{ rows=parseCSV(String(r.result)); }catch(err){ msg.style.color='var(--danger)'; msg.textContent='CSVを読み取れませんでした'; return; }
+    if(rows.length<2){ msg.style.color='var(--danger)'; msg.textContent='データ行が見つかりませんでした'; return; }
+    const head=rows[0].map(h=>h.trim().toLowerCase());
+    const col=name=>head.indexOf(name);
+    const cTitle=col('title'), cUrl=col('url'), cUser=col('username'), cPass=col('password'), cNotes=col('notes'), cOtp=col('otpauth');
+    if(cTitle<0&&cUser<0&&cPass<0){ msg.style.color='var(--danger)'; msg.textContent='ヘッダー(title/url/username/password等)が見つかりませんでした'; return; }
+    const existKey=e=>[(e.title||'').trim().toLowerCase(),(e.username||'').trim().toLowerCase(),(e.url||'').trim().toLowerCase()].join('|');
+    const existing=new Set(vault.entries.filter(x=>!x.deleted).map(existKey));
+    let added=0, skipped=0, now=Date.now();
+    for(let i=1;i<rows.length;i++){
+      const row=rows[i];
+      const title=(row[cTitle]||'').trim(), url=(row[cUrl]||'').trim(), username=(row[cUser]||'').trim(),
+            password=(row[cPass]||'').trim(), notes=(row[cNotes]||'').trim(), otp=cOtp>=0?(row[cOtp]||'').trim():'';
+      if(!title&&!username&&!password&&!url) continue;
+      const im={title:title||url||'(無題)',username,password,totp:otp?parseSecret(otp):'',url,notes,tags:[],favorite:false,deleted:false,created:now,updated:now+i,history:[],id:uuid()};
+      if(existing.has(existKey(im))){ skipped++; continue; }
+      vault.entries.push(im); existing.add(existKey(im)); added++;
+    }
+    persist(); render();
+    msg.style.color='var(--accent2)'; msg.textContent=`取り込み完了（追加${added}件・重複スキップ${skipped}件）`;
+    toast(`CSVから${added}件取り込みました`);
   };
   r.readAsText(f); e.target.value='';
 });
